@@ -1,12 +1,11 @@
 ---
 name: video-recap-sop
-description: 标准操作流程，引导大模型按 Step 0–4 执行 B 站二创视频制作。在用户开始二创任务、讨论流程或要求"按 SOP 来做"时启用。这是 orchestrator skill，本身不写脚本也不剪视频，只负责协调 bilibili-competitor-radar、gameshow-recap-creator、video-use 三个 sub-skill，并强制遵守项目目录规范。
+description: 引导大模型按 Step 0–4 执行 B 站二创视频制作。在用户开始二创任务或讨论流程时启用。这是 orchestrator skill，本身不写脚本也不剪视频，只负责协调 bilibili-competitor-radar、gameshow-recap-creator、video-use 三个 sub-skill，并强制遵守项目目录规范。
 ---
 
 # 二创视频 Workflow SOP
 
 > 适用于 Game Show / Reality Show 的 B 站二创视频制作
-> 最后更新：2026-07-22
 
 ---
 
@@ -14,16 +13,55 @@ description: 标准操作流程，引导大模型按 Step 0–4 执行 B 站二�
 
 这是大模型执行二创视频任务的 **Standard Operating Procedure**。每次开始一个新的二创任务前，先通读这份文档，然后按步骤执行。
 
-**不要把它当成 README。** 它的目的是告诉我"一步一步怎么走"，而不是告诉我"系统长什么样"。
-
-**它是 orchestrator skill。** 本身不产出任何视频 / 脚本 / 报告，只负责：
+**它是 orchestrator skill。** 只负责：
 1. 协调三个 sub-skill 的调用顺序
 2. 强制遵守项目目录规范
 3. 在每一步记录状态到项目 README.md
 
 ---
 
-## 1. 三个 Skill 总览
+## 1. 强制守则：错误必须弹出（动手前先看）
+
+**核心规则**：执行任何 Step 时，一旦发现脚本 / 命令报错，必须**立即停止并向用户报告**。**绝对禁止**：
+
+- ❌ 静默重试（同一报错重复跑）
+- ❌ 自己写补丁代码绕过
+- ❌ 闷头继续往下跑下一个 Step
+- ❌ 把多个报错攒成一段轻描淡写的总结
+- ❌ 说"差不多了" / "基本完成" / "应该成功了"
+
+正确做法：**报错 → 弹栈 → 停手 → 等用户拍板**。
+
+### 1.1 必须弹出的场景
+
+| 触发条件 | 处理方式 |
+|---|---|
+| 任何 sub-skill 脚本返回非 0 退出码 | 完整贴出错误输出（不要只贴 exit code） |
+| ffmpeg / yt-dlp / edge-tts 等命令行报错 | 贴出 stderr 关键 5–10 行 |
+| 期望生成的文件不存在 / 为 0 字节 | 列出预期路径 vs 实际状态 |
+| Skill 自己报告"发现缺什么" | 把缺什么原样汇报，不要默默绕路 |
+| 跑超过 3 分钟没出新日志 | 视为卡死，弹出询问是否继续等 |
+| 同一个错连报 3 次 | 立刻建议人工介入，不要再自动重试 |
+
+### 1.2 弹出模板
+
+发现错误时，回复必须包含这五件事，缺一不可：
+
+1. **在哪一步**：Step X 的子任务 Y（用 SOP 里的 Step 编号）
+2. **在哪个文件 / 命令**：绝对路径或脚本名
+3. **报错原文**：关键 5–10 行（不要省略 stack trace）
+4. **已尝试过什么**：列出来（不要 silent retry）
+5. **明确询问**：要用户决定下一步怎么办（修代码 / 换 backend / 跳过 / 重跑）
+
+### 1.4 配套约定
+
+- 项目 README.md 加一节 `## 中断记录`，每次中断都追加一行（时间 / Step / 错误 / 决策）
+- 用户确认前，不要继续后续 Step
+- 即使"看起来快好了"，也必须弹出确认，不许自动收尾
+
+---
+
+## 2. 三个 Skill 总览
 
 | # | Skill | 角色 | 是否必经 |
 |---|---|---|---|
@@ -34,14 +72,9 @@ description: 标准操作流程，引导大模型按 Step 0–4 执行 B 站二�
 **何时启用 Skill 1？**
 - 用户说"我想做个新题材的二创，你帮我调研一下" → 启用
 - 用户直接说"做 The Traitors S01E01" → 跳过（已有清晰选题）
-
-**何时跳过 Skill 1？**
-- 用户已经指定了具体节目 / 集数（如"S01E01"）
-- 用户之前已经做过同类题材的竞品调研
-
 ---
 
-## 2. 二创项目目录规范
+## 3. 二创项目目录规范
 
 每次开始一个二创任务，必须按以下结构创建项目目录：
 
@@ -53,6 +86,7 @@ outputs/
         ├── README.md                   # 项目记录（流水线回放 + 状态 + 包装清单）
         ├── gameshow-recap-creator/     # Skill 2 输出（脚本）
         │   ├── pre-analysis.md         # 第一层：角色 / 目标 / 主线 / 爆点
+        │   ├── episode-brief.md        # 单集梗概：一→二层交接（临时，二层定稿后删）
         │   └── recap-script.md         # 第二层：解说脚本（旁白 + 画面 + 花字）
         └── video-use/                  # Skill 3 工作目录
             ├── transcripts/            # ASR 转写 JSON（可选）
@@ -77,13 +111,16 @@ outputs/
 |---|---|---|
 | `<根>/README.md` | 大模型在 Step 1 创建 | 项目启动时 |
 | `<根>/gameshow-recap-creator/pre-analysis.md` | Skill 2（第一层） | Step 2 |
+| `<根>/gameshow-recap-creator/episode-brief.md` | Skill 2（第一层产出 → 第二层消费） | Step 2 生成，**第二层定稿后删除** |
 | `<根>/gameshow-recap-creator/recap-script.md` | Skill 2（第二层） | Step 2 |
 | `<根>/video-use/edit/*` | Skill 3 | Step 3 |
 | `<根>/final.mp4` | 大模型从 `video-use/edit/final.mp4` 复制 | Step 3 完成时 |
 
+> **临时文件 `episode-brief.md`**：第一层交给第二层的单集梗概（整集走向 + 主线地图 + 必须包含的爆点 / 转折点 / 亮点）。作用是让第二层在按时间线写脚本之前，先拿到整集全局视野和一张"不许漏"的清单。**第二层读完即用，定稿后删除——不进最终交付物，也不留存在项目目录。**
+
 ---
 
-## 3. 工作流步骤
+## 4. 工作流步骤
 
 ### Step 0：通读本 SOP
 
@@ -108,8 +145,13 @@ outputs/
    - 场景类型：A 完整节目 / B 剧集（某集）
 4. Skill 2 输出：
    - `pre-analysis.md`：第一层（角色名单 + 游戏目标 + 主线地图 + 核心爆点）
+   - `episode-brief.md`：单集梗概，**临时交接文件**
+     - 内容：整集走向 + 主线地图 + 必须包含的核心爆点 + 转折点与亮点
+     - 用途：让第二层在按时间线写脚本前，先拿到整集全局视野和一张"不许漏"的清单
+     - 生命周期：第一层产出 → 第二层读取 → 第二层定稿后**删除**（不进交付物）
    - `recap-script.md`：第二层（11 分钟解说脚本）
-5. **不要跳到 Step 3**，先在项目 README.md 记录 Skill 2 完成状态
+5. 确认 `episode-brief.md` 已被第二层删除；**若仍残留，手动清理后再进 Step 3**
+6. **不要跳到 Step 3**，先在项目 README.md 记录 Skill 2 完成状态
 
 ### Step 3：启用 Skill 3（video-use）
 
@@ -134,7 +176,7 @@ outputs/
 
 ---
 
-## 4. Skill 详细说明
+## 5. Skill 详细说明
 
 ### 4.1 bilibili-competitor-radar（辅助前置，draft）
 
@@ -167,7 +209,7 @@ outputs/
 
 ---
 
-## 5. 数据流对照表
+## 6. 数据流对照表
 
 | 数据名称 | 产生方 | 消费方 | 格式 | 存储位置 |
 |---|---|---|---|---|
@@ -177,7 +219,7 @@ outputs/
 
 ---
 
-## 6. 已验证的端到端样例
+## 7. 已验证的端到端样例
 
 **项目**：`outputs/projects/The-Traitors-UK-S01E01/`
 
