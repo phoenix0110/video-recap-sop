@@ -1,31 +1,18 @@
 # video-recap-sop
 
-B 站二创视频工作流 SOP（Standard Operating Procedure）。orchestrator skill，引导大模型按 Step 0–4 执行：
+单条 YouTube 博主视频的中文二创工作流协调 Skill。
 
-1. **Step 0**：通读本 SOP
-2. **Step 1**：判断是否启用 `bilibili-competitor-radar`（辅助前置，可选）
-3. **Step 2**：创建项目目录 + 启用 `gameshow-recap-creator`（必经）
-4. **Step 3**：启用 `video-use`（必经）
-5. **Step 4**：人工审核 + 上传 B 站
+它负责串联：
 
-## 适用场景
+1. 源视频与带时间码字幕准备
+2. `gameshow-recap-creator` 解说脚本
+3. 剪辑前节奏、原声与字幕确认
+4. `video-use` 的 TTS、逐 cue 选片、剪辑与渲染
+5. 每个切片首尾检查和整片节奏审核
 
-- 用户开始一个新的二创视频任务
-- 用户说"按 SOP 来做"或"按流程走"
-- 用户要求查阅工作流 / 验证步骤是否符合规范
+核心标准是：脚本时长只作规划，最终时间线跟随实际旁白；镜头按完整叙事拍点推进；额外原声空间只留给能够独立成立的表达、反应或事件。
 
-## 不是
-
-- ❌ 不是一个 README
-- ❌ 不产出任何视频 / 脚本 / 报告
-- ❌ 不替代三个 sub-skill 的具体执行
-
-## 它做什么
-
-- 协调 `bilibili-competitor-radar` / `gameshow-recap-creator` / `video-use` 三个 sub-skill 的调用顺序
-- 强制遵守项目目录规范（`outputs/projects/<视频名>/{gameshow-recap-creator,video-use}/`）
-- 在每一步记录状态到项目 README.md
-- 维护数据流（竞品报告 → 解说脚本 → 最终成片）
+本 Skill 只负责编排，不代替脚本创作或视频剪辑。
 
 ## License
 
