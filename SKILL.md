@@ -1,232 +1,265 @@
 ---
 name: video-recap-sop
-description: 引导大模型按 Step 0–4 执行 B 站二创视频制作。在用户开始二创任务或讨论流程时启用。这是 orchestrator skill，本身不写脚本也不剪视频，只负责协调 bilibili-competitor-radar、gameshow-recap-creator、video-use 三个 sub-skill，并强制遵守项目目录规范。
+description: 协调YouTube视频的中文二创流程，从源视频与字幕、解说脚本、剪辑确认到成片检查。本 Skill 负责跨 Skill 交接，不代替脚本创作或视频剪辑。
 ---
 
-# 二创视频 Workflow SOP
+# 单条视频二创 Workflow SOP
 
-> 适用于 Game Show / Reality Show 的 B 站二创视频制作
+## 职责
 
----
-
-## 0. 文档用途
-
-这是大模型执行二创视频任务的 **Standard Operating Procedure**。每次开始一个新的二创任务前，先通读这份文档，然后按步骤执行。
-
-**它是 orchestrator skill。** 只负责：
-1. 协调三个 sub-skill 的调用顺序
-2. 强制遵守项目目录规范
-3. 在每一步记录状态到项目 README.md
+1. 获取源视频与带时间码字幕。视频与字幕下载调用 `video-transcript-fetcher`
+2. 调用 `gameshow-recap-creator` 生成二创解说脚本。
+3. 在剪辑前确认节奏、原声和字幕方案。
+4. 调用 `video-use` 完成选片、TTS、剪辑、字幕和成片检查。
 
 ---
 
-## 1. 强制守则：错误必须弹出（动手前先看）
+## Key learnings
 
-**核心规则**：执行任何 Step 时，一旦发现脚本 / 命令报错，必须**立即停止并向用户报告**。**绝对禁止**：
-
-- ❌ 静默重试（同一报错重复跑）
-- ❌ 自己写补丁代码绕过
-- ❌ 闷头继续往下跑下一个 Step
-- ❌ 把多个报错攒成一段轻描淡写的总结
-- ❌ 说"差不多了" / "基本完成" / "应该成功了"
-
-正确做法：**报错 → 弹栈 → 停手 → 等用户拍板**。
-
-### 1.1 必须弹出的场景
-
-| 触发条件 | 处理方式 |
-|---|---|
-| 任何 sub-skill 脚本返回非 0 退出码 | 完整贴出错误输出（不要只贴 exit code） |
-| ffmpeg / yt-dlp / edge-tts 等命令行报错 | 贴出 stderr 关键 5–10 行 |
-| 期望生成的文件不存在 / 为 0 字节 | 列出预期路径 vs 实际状态 |
-| Skill 自己报告"发现缺什么" | 把缺什么原样汇报，不要默默绕路 |
-| 跑超过 3 分钟没出新日志 | 视为卡死，弹出询问是否继续等 |
-| 同一个错连报 3 次 | 立刻建议人工介入，不要再自动重试 |
-
-### 1.2 弹出模板
-
-发现错误时，回复必须包含这五件事，缺一不可：
-
-1. **在哪一步**：Step X 的子任务 Y（用 SOP 里的 Step 编号）
-2. **在哪个文件 / 命令**：绝对路径或脚本名
-3. **报错原文**：关键 5–10 行（不要省略 stack trace）
-4. **已尝试过什么**：列出来（不要 silent retry）
-5. **明确询问**：要用户决定下一步怎么办（修代码 / 换 backend / 跳过 / 重跑）
-
-### 1.4 配套约定
-
-- 项目 README.md 加一节 `## 中断记录`，每次中断都追加一行（时间 / Step / 错误 / 决策）
-- 用户确认前，不要继续后续 Step
-- 即使"看起来快好了"，也必须弹出确认，不许自动收尾
+新项目先读 [key-learnings.md](key-learnings.md)。制作或重大迭代后，只追加跨项目可复用且未固化的经验；已固化条目移除，不记录项目日志或临时故障。
 
 ---
 
-## 2. 三个 Skill 总览
+## 共用制作规则
 
-| # | Skill | 角色 | 是否必经 |
-|---|---|---|---|
-| 1 | `bilibili-competitor-radar` | 选题 / 竞品 / 热度调研 | ❌ **辅助前置**，已有清晰选题时跳过 |
-| 2 | `gameshow-recap-creator` | 写解说脚本 | ✅ **必经** |
-| 3 | `video-use` | 视频剪辑合成 | ✅ **必经** |
+### 前置确认
 
-**何时启用 Skill 1？**
-- 用户说"我想做个新题材的二创，你帮我调研一下" → 启用
-- 用户直接说"做 The Traitors S01E01" → 跳过（已有清晰选题）
+写脚本前，依次确认前置分析（题材、主线、钩子、中文昵称）和原声的目标比例；将确认值传给脚本
+
+### 受众文化语境
+
+- 目标受众为国内中文观众。外国品牌、文化典故、人物若国内观众普遍不了解，用通用描述替代或给出简短解释
+- 全球知名度足够高的品牌（星巴克、麦当劳等）和国内观众普遍认识的文化符号不在此限。
+
+### 叙事与素材依据
+
+- 完整高光开场，可取自后段，随后回到故事起点；正文按原片时间线和完整事件推进，回答核心问题后收束。
+- 事实、人物关系、地点、数字、因果、结果和引用须有素材依据。
+- 画面范围须支持旁白，完整覆盖动作、表达或反应，不带入未讲到的新事件。
+- 钩子讲一件事就用 1–2 个原片把这件事讲清楚，不堆叠零散预告片段；预告内容交给旁白口述，不为每句话配一个画面。
+- 原片间隔不足 10 秒的相邻片段合并为一个连续画面范围；短间隔强行切开只会让观感割裂。旁白覆盖不了整段画面时允许几秒留白：适度留白的观感远好于碎片式跳切。
+- 段头时间仅作规划，不分配固定段落时长；规划气口约 1 秒，最终按实际 TTS 和选片时长重建时间线。
+
+### 人物称呼
+
+- 主角和核心同伴使用已确认的中文昵称，禁用英文原名或纯音译；取名优先级：外貌 > 性格 > 职业 > 频道标签。
+- 主角在钩子后首个正文段落介绍昵称和身份，之后统一用昵称，不用“他/她”代替；同伴随事件出场。
+- 公众人物、职业选手、次要人物的称呼按题材例外处理；旁白主持人不列入原片人物表。
+
+### 原声保留与翻译
+
+- 原声对话按相对完整的交流选择，保留话题进入、必要的追问／解释／反应和自然收束；不能仅凭一两句语义完整就抽出一组问答。按 [完整交流规范](../video-use/references/recap-viewer-preferences.md#原声对话保留交流的展开过程)选源范围、安排时长并检查首尾衔接。
+- 仅保留不可替代且独立完整的表达、演示或情绪事件；可由一句旁白概括的短句改用旁白
+- 原声占比须匹配确认值，容差 ±10 个百分点；初稿按预计时长、成片按实际时长统计，超限则调整。
+- 按源字幕核实原话起止；脚本范围和 clip 不截断表达，必要时多留 2–3 秒。
+- 非中文原话下方写中文翻译，成片同步烧录；中文、背景音乐和环境音免翻译。
+- 翻译字幕起点 = section 的 `output_start` + 原声 clip 在 section 内的累积偏移，不使用 gap 起点。
+
+### 旁白润色与审稿
+
+- 叙事编辑 → 素材核查 → `humanizer-zh` 口播润色 → `shuorenhua` 标问题 → 修正与整稿口播复读。详细执行和记录见 [Layer 4](../gameshow-recap-creator/layer-4-humanize.md)。不能把初稿、格式校验或素材对齐通过当作完成润色。
+- 目标是现场感、自然口播和有辨识度的解说口吻，精简不是主要目标。保留有作用的幽默、紧张感、悬念、反问、停顿和重复；不按词语或句式黑名单机械删改，不以修改数量或字数下降证明执行过。
+- 仅改旁白表达；保留结构、顺序、标题、时间码、画面与原声字段、事实、称呼、原话、翻译、人设及用户确认的固定句。结构或素材问题退回对应层，解决后重新完成后续步骤。
+- `shuorenhua` 不做第二轮全文改写，不代替原声和画面的事实核验
+- 单行字幕通过语意断句实现，不为字幕长度删掉旁白的情绪或内容。素材支持的行动直接叙述；主观判断、争议解释和未核实承诺仍保留归属。
+
+### 字幕格式
+
+字幕统一为底部单行白字，**单条字幕不超过 25 个中文字符**（含英文和数字按实际占位计），超出会溢出屏幕。通过语义断句控制单行宽度，保留口播的人情味和有作用的情绪。处理原片烧录字幕的重叠问题，渲染与剪映工程使用一致样式。具体样式和局部迭代执行 [用户二创偏好](../video-use/references/recap-viewer-preferences.md#字幕与逐句修改)，用户已有确认直接沿用。
+
 ---
 
-## 3. 二创项目目录规范
+## 项目目录
 
-每次开始一个二创任务，必须按以下结构创建项目目录：
+每条视频在以下根目录创建独立的 `<video-name>` 子目录：
 
+`C:\Users\yinsh\WorkBuddy\B站二创视频\outputs\projects\`
+
+```text
+C:\Users\yinsh\WorkBuddy\B站二创视频\outputs\projects\<video-name>\
+├── README.md
+├── source/                         # 原视频、字幕和元数据
+├── gameshow-recap-creator/
+│   ├── pre-analysis.md
+│   └── recap-script.md
+├── progress/
+│   ├── progress.md               # 进度清单（每步完成后更新）
+│   └── dashboard.html            # 可视化看板（自动生成）
+├── edit/
+│   ├── project.md
+│   ├── edl.json
+│   ├── narration_manifest.json
+│   ├── master.srt
+│   ├── base.mp4                  # 拼接后的画面（含源音频）
+│   ├── base_video_only.mp4       # 纯画面（无音频，剪映用）
+│   ├── source_background.m4a     # 原声-背景轨（剪映用）
+│   ├── source_preserve.m4a       # 原声-保留轨（剪映用）
+│   ├── sentences/              # 每句字幕的独立剪映配音
+│   ├── sentences-manifest.json # 逐句映射、音色与实测时长
+│   └── full_narration.m4a        # 可选派生渲染／试听音轨
+└── final.mp4                     # 默认直接生成的正式成片
 ```
-outputs/
-└── projects/
-    └── <二创视频名称>/                  # 根目录，以本次视频命名
-        ├── final.mp4                   # ⭐ 根目录：Video Use 产出的最终成片
-        ├── README.md                   # 项目记录（流水线回放 + 状态 + 包装清单）
-        ├── gameshow-recap-creator/     # Skill 2 输出（脚本）
-        │   ├── pre-analysis.md         # 第一层：角色 / 目标 / 主线 / 爆点
-        │   ├── episode-brief.md        # 单集梗概：一→二层交接（临时，二层定稿后删）
-        │   └── recap-script.md         # 第二层：解说脚本（旁白 + 画面 + 花字）
-        └── video-use/                  # Skill 3 工作目录
-            ├── transcripts/            # ASR 转写 JSON（可选）
-            └── edit/                   # 编辑过程产物
-                ├── project.md          # 项目记忆
-                ├── takes_packed.md     # 短语级转写
-                ├── edl.json            # 剪辑决策
-                ├── master.srt          # 输出时间线字幕
-                ├── preview.mp4         # 自检预览
-                └── final.mp4           # ← 完成后复制到根目录
+
+项目 README 记录素材来源、已确认方案、当前状态和最终路径。
+
+**成片输出：** 默认输出项目根目录 `final.mp4`，修改时覆盖同一文件；仅用户明确要求预览或试渲染时使用 `--preview`。
+
+---
+
+## 进度追踪
+
+每个项目通过 `progress/progress.md` 清单和 `progress/dashboard.html` 看板记录并展示工作进展。
+
+### 初始化
+
+项目创建时，将 [progress-checklist-template.md](references/progress-checklist-template.md) 复制到 `<project>/progress/progress.md`，填入项目名称、源视频和目标时长。
+
+### 更新规则
+
+每完成一个 Step 或 Layer 的验收项后，立即将对应 checkbox 从 `- [ ]` 改为 `- [x]`。完成一个完整 Step 时，运行看板生成：
+
+```powershell
+python "C:\Users\yinsh\.workbuddy\skills\video-recap-sop\tools\generate_dashboard.py" "<project_dir>"
 ```
 
-### 命名规范
+### 看板内容
 
-- 根目录：用视频名，**英文 / 拼音 + 横线**，避免空格和中文路径
-- 示例：`The-Traitors-UK-S01E01`、`Survivor-S47E01`、`Squid-Game-S02E01`
-- 子目录名固定为 `gameshow-recap-creator/` 和 `video-use/`，与 Skill 名一致
-
-### 文件职责
-
-| 文件 | 谁负责 | 何时生成 |
-|---|---|---|
-| `<根>/README.md` | 大模型在 Step 1 创建 | 项目启动时 |
-| `<根>/gameshow-recap-creator/pre-analysis.md` | Skill 2（第一层） | Step 2 |
-| `<根>/gameshow-recap-creator/episode-brief.md` | Skill 2（第一层产出 → 第二层消费） | Step 2 生成，**第二层定稿后删除** |
-| `<根>/gameshow-recap-creator/recap-script.md` | Skill 2（第二层） | Step 2 |
-| `<根>/video-use/edit/*` | Skill 3 | Step 3 |
-| `<根>/final.mp4` | 大模型从 `video-use/edit/final.mp4` 复制 | Step 3 完成时 |
-
-> **临时文件 `episode-brief.md`**：第一层交给第二层的单集梗概（整集走向 + 主线地图 + 必须包含的爆点 / 转折点 / 亮点）。作用是让第二层在按时间线写脚本之前，先拿到整集全局视野和一张"不许漏"的清单。**第二层读完即用，定稿后删除——不进最终交付物，也不留存在项目目录。**
+- 项目基本信息（名称、源视频、时长）
+- 7 个 Step 的完成比例，按状态着色（完成/进行中/未开始）
+- 可展开查看每个 Step 下的逐项 checkbox
+- 自动检测当前所处步骤
 
 ---
 
-## 4. 工作流步骤
+## 工作流
 
-### Step 0：通读本 SOP
+### Step 1：准备源素材
 
-每次新任务开始前，第一件事是读这份文档（自己在 skill 文件夹里找 `~/.workbuddy/skills/video-recap-sop/SKILL.md`），建立工作流记忆。
+- 确认源视频可读，并找到同源的 SRT、VTT 或带时间码转写。
+- 优先使用发布者字幕；没有字幕时重新转写。
+- 保留源文件不变，所有工作产物写入项目目录。
 
-### Step 1：判断是否需要 Skill 1
+### Step 2：生成解说脚本
 
-询问用户：
-- "你想做的二创题材是什么？" → 若用户已指定具体节目 / 集数，跳过 Skill 1
-- 若用户开放题材，启用 Skill 1（`bilibili-competitor-radar`），输出 `competitor-report.md`（可选放在项目目录里）
+完成[前置确认](#前置确认)，将源字幕、视频时长、元数据和确认值交给 `gameshow-recap-creator`；执行[共用制作规则](#共用制作规则)。
 
-### Step 2：创建项目目录 + 启用 Skill 2（gameshow-recap-creator）
+本步骤包括 Layer 1–4，必须实际执行旁白润色和只标问题审稿。交付 `recap-script.md`、`narration-review.md`、`narration-review.json` 。运行 `gameshow-recap-creator/tools/validate_narration_review.py <recap-script.md>` 并通过后，才进入 Step 3。记录缺失、未完成或对应旧稿时，继续补完 Layer 4，不额外要求用户批准润色。
 
-1. 创建项目目录：
-   ```
-   outputs/projects/<视频名>/gameshow-recap-creator/
-   ```
-2. 创建项目 README.md
-3. 调用 Skill 2，输入：
-   - 原片字幕（SRT / JSON / TXT）
-   - 原视频文件路径（用于确认时长）
-   - 场景类型：A 完整节目 / B 剧集（某集）
-4. Skill 2 输出：
-   - `pre-analysis.md`：第一层（角色名单 + 游戏目标 + 主线地图 + 核心爆点）
-   - `episode-brief.md`：单集梗概，**临时交接文件**
-     - 内容：整集走向 + 主线地图 + 必须包含的核心爆点 + 转折点与亮点
-     - 用途：让第二层在按时间线写脚本前，先拿到整集全局视野和一张"不许漏"的清单
-     - 生命周期：第一层产出 → 第二层读取 → 第二层定稿后**删除**（不进交付物）
-   - `recap-script.md`：第二层（11 分钟解说脚本）
-5. 确认 `episode-brief.md` 已被第二层删除；**若仍残留，手动清理后再进 Step 3**
-6. **不要跳到 Step 3**，先在项目 README.md 记录 Skill 2 完成状态
+每次交付用一句话说明本次润色重点及审稿结果；无须把全部检查记录放进对话。不得只宣布“已润色”而没有实际记录。
 
-### Step 3：启用 Skill 3（video-use）
+### Step 3：剪辑前确认
 
-1. 读 `recap-script.md`，把脚本喂给 `~/.workbuddy/skills/video-use/`
-2. video-use 会创建 `<根>/video-use/edit/` 子目录结构
-3. 视频剪辑流程（video-use 内部）：
-   - inventory：ffprobe 源文件
-   - transcribe：跳过（已有官方 SRT）
-   - pack：`recap-script.md` 作为 EDL 输入
-   - LLM reasons：基于 recap-script 的时间码决策
-   - render：per-segment extract + concat + 字幕 + 花字
-   - self-eval：每个切点 ±1.5s 自检，最多 3 轮
-4. video-use 产出 `<根>/video-use/edit/final.mp4`
-5. **复制** `final.mp4` 到 `<根>/final.mp4`
-6. 更新项目 README.md，记录最终成片路径与状态
+脚本完成后、进入剪辑前，用自然语言向用户确认：
 
-### Step 4：人工审核 + 上传
+- 整体节奏：沉浸、自然推进，还是更紧凑。
+- 原声在旁白下的音量，以及非旁白段是否允许原声突出。
+- 字幕底部样式。字幕统一为单行
+- 配音声音：先询问用户偏好男声还是女声，再确认具体音色：
+  1. **女声**（默认"台湾腔甜妹"）：`zh_female_xiaohe_saturn_bigtts`，resource `7553535833219812618`
+  2. **男声**（默认"气泡音小千"）：`saturn_zh_male_qianxixiaobei`，resource `7600680247834578186`
+  用户若想使用剪映中其他人声，让其提供具体音色名称，再从剪映缓存核实 speaker_id 与 resource_id。使用 `jianying-editor` 的剪映内置TTS音色，核实已确认名称与speaker_id，不沿用Edge声音ID。字幕先定稿，一条字幕独立生成一段音频。细则见 [逐句配音规范](../video-use/references/jianying-sentence-tts.md)。已有用户确认直接沿用。
 
-- 打开 `final.mp4` 检查
-- 按项目 README.md 的"包装清单"补齐封面 / 标签 / 简介
-- 上传到 B 站
+在对话中确认，将确定值写入 EDL 和项目记录。
+
+### Step 4：剪辑与时间重排
+
+进入剪辑和生成 TTS 前再次运行 `validate_narration_review.py`，确保审核对应当前稿件。脚本文字改动后旧审核失效：保留用户改动，重新润色与审稿并更新记录；仅时间码或画面字段调整也要重核相关保护字段和素材依据，再更新当前稿件哈希，不能用旧记录放行。已生成的配音和字幕须同步刷新。`video-use/helpers/jianying_tts.py` 已在逐句配音入口自动校验：脚本位于项目的 `gameshow-recap-creator/` 目录，或同目录已有审核回执时，审核不通过即退出，缓存也不能绕过。逐句配音也必须先校验整份当前脚本；不要移动脚本或绕过整稿审核。使用 `video-use/helpers/jianying_tts.py`，强制剪映SAMI并禁用Edge兜底，先试配核实音色和独立片段，再批量生成。
+
+按 `video-use/SKILL.md` 的 Recap process 顺序执行，不跳过或合并步骤；每步核查产物后再继续。
+
+1. 建立 cue 映射：旁白时间与文本 → 源字幕时间与原话 → 画面范围与首尾依据。
+2. 保持原片1×速度；动作与必要反应完成后再切，一个连续镜头可承载多句旁白。画面行的 `+` 表示内容推进，不强制切镜头，不按比例塞入所有候选素材。
+3. 普通段按实际 TTS 安排；额外空间留给完整原声交流、完成动作／反应及用户要求的无人声留白。按脚本标记保留原声；若标记范围只包含孤立问答或缺少上下文，扩展至同话题的自然收束，同步源范围、译文和时码，不把短选段当成不可调整的固定边界。
+4. 按画面累积时长重算旁白 `output_start`，使起声对齐画面；根据实际原声／留白插入间隙，逐句更新音频片段及 `master.srt`。`full_narration.m4a` 可作为渲染或试听派生物重组，不取代独立句音频。
+5. 普通气口保持 `source_under_narration` 音量；仅显式原声保留段使用正常音量，翻译执行[原声保留与翻译](#原声保留与翻译)。
+6. 排除源片订阅提示、频道 logo 和 end screen；收尾可用中段环境镜头呼应。
+7. EDL、字幕和 cue map 就绪后，以清晰的 Markdown（`edit/caption-picture-review.md`）交付画面与字幕对照，不生成 HTML；按场景列时码、画面说明、声音类型及完整中文字幕，技术证据留内部。用户确认后渲染。
+8. 渲染后按[原声保留与翻译](#原声保留与翻译)复核实际占比。
+
+### 剪辑三原则（片段、留白与画面对齐）
+
+以下三条必须**同时**满足，不能为满足其中一条而违反另外两条：
+
+1. **片段不能剪得太零散**
+   - 单个视频 clip 最短不低于 5 秒；TTS 时长不足 5 秒的旁白段与前后相邻 clip 合并（优先向前合并，保持叙事顺延）。
+   - 原片间隔不足 10 秒的相邻 clip 必须合为一个连续画面范围（已有规则，此处重申）。
+   - 源时间线重叠的 clip（如 `[42:44–43:02]` 与 `[43:00–46:00]`）必须合并为一个 clip。
+
+2. **留白不能有未翻译的博主说话声**
+   - **禁止**自动在 clip 末尾追加"视觉呼吸"时间。clip 时长 = 旁白 TTS 时长 + 脚本中显式标注的原声保留时长，不得额外填充。
+   - 需要呼吸间隙时，由脚本写手在画面行标注，或用户明确要求；剪辑程序不自行生成。
+   - 非保留段（旁白段和普通过渡）的源音频始终保持 `source_under_narration` 音量（默认 0.15）。只有脚本中 `**原声保留**` 标记且附带中文翻译的段落才使用原始音量。
+   - `split_audio.py` 的保留窗口必须来自 `narration_manifest.json` 中的显式 `preserve_windows` 列表；不得将旁白结束后的所有空隙都推断为保留窗口。
+
+3. **画面必须反映旁白和字幕的内容**
+   - clip 的源起始点应让旁白描述的关键画面出现在对应旁白播放的时间范围内。若旁白提到"冰箱"，clip 必须展示冰箱所在的画面；若当前 `src` 起点过早导致关键画面被截断，向后调整 `src` 直到画面覆盖。
+   - 当一个旁白段横跨同一场景的多个视觉要素时，`src` 起点选择以覆盖最多关键画面为准，而非总是从场景第一帧开始。
+   - 调整 `src` 不得带入旁白未提及的新事件（已有规则，此处重申）。
+
+### Step 5：成片检查
+
+- 整片渲染前检查开场预览，记录切镜理由（含原片内部切镜），删去无必要短切；确认所有片段为1×速度。
+- 逐个检查切点前后的画面、原声、旁白和字幕，核查语义与节奏连续性。
+- 正常速度看完整个正文，确认转折讲清楚、镜头不过密、没有无意义长空白。
+- 修正可在当前范围内解决的问题并重新渲染；通常最多进行三轮完整检查。
+- 自行修正对齐和节奏问题；仅缺素材、需用户选择或新权限、外部服务阻塞时暂停并说明。
+
+按[成片输出规则](#项目目录)保存；在 README 记录审核状态。
+
+### Step 6：创建剪映项目
+
+成片渲染后，调用 `jianying-editor` 创建可打开的剪映项目，方便用户进一步调整配音、配乐和音量平衡。
+
+### Step 7：剪映项目验收
+
+按 [剪映项目生成与检查规范](references/jianying-project-validation.md) 逐项验收 Step 6 生成的剪映项目：
+
+1. 加载 `draft_info.json`，检查 6 条轨道全部存在且 segment 数量与 EDL/manifest 交叉一致。
+2. 遍历每条轨道，确认无 segment 重叠（整数微秒容差 2μs）。
+3. 抽查原声-保留 WAV 的 RMS > 10（非静音）。
+4. 抽查字幕断句：对照 `recap-script.md` 中已知的换行位置，确认未跨行合并。
+5. 确认原声-背景和原声-保留轨使用的是**单独切分的片段**，而非一整条时间线音频。
+
+验收不通过：删除剪映项目目录，修正问题后从 Step 6 重建。连续三次不通过需暂停并报告具体失败项。
+
+**轨道结构（画面、原声两轨、逐句旁白和字幕，自动创建）：**
+
+1. **Video**：按 EDL 每个 range 导入独立视频片段（`clips_graded/seg_XX_*.mp4`），而非一整条连续素材。传递 `start_time` 和 `duration` 时使用 int 微秒值（`round(duration * 1_000_000)`），用整数累加 `output_pos_us` 避免浮点截断产生 SegmentOverlap。
+2. **原声-背景**：源音频，preserve_slot 间隙静音。
+3. **原声-保留**：源音频，仅 preserve_slot 间隙有声。
+4. **旁白**：从 `sentences-manifest.json` 导入每条字幕的独立剪映TTS音频，一条cue一个音频segment、一个独立素材；不用单条 `full_narration.m4a` 代替。
+5. **字幕**：一条cue一个text segment，起止精确匹配对应旁白的实际时长；原声翻译另按原话时间添加，不生成中文配音。
+
+按 `narration_manifest.json` 的 preserve_slot gap 窗口，用 ffmpeg `volume` + `between()` 分离音轨 2、3。项目内直接创建逐句字幕；`master.srt` 同时交付作备份。导入后检查独立音频素材数、音频片段数、字幕数及逐项起止；短语音频在毫秒级舍入上以剪映实际AudioSegment时长为准，避免亚毫秒重叠产生额外音轨。
+
+项目名使用脚本标题或视频中文名。
+
+**音量混音规范：**
+
+| 轨道 | 音量 | 说明 |
+|------|------|------|
+| 旁白 | 保持原始音量 | 不做额外增减，TTS 输出即最终音量 |
+| 原声-背景 | 极低（render.py 中 `source_under_narration`） | 旁白段的环境氛围，不干扰旁白 |
+| 原声-保留 | 保持原始分贝 | preserve_slot 对话段，让观众清晰听到原声 |
+| BGM | 用户在剪映中调节，不应盖过旁白 | 见下方 BGM 规范 |
+
+**背景音乐（BGM）规范（自动创建）：**
+
+在旁白段（非 preserve_slot 间隙）自动添加 BGM 轨：
+
+- **选曲来源**：`data/cloud_music_library.csv`，按题材关键词（如「旅行」「舒缓」「VLOG」）过滤，用 `project.add_cloud_music(music_id, start_time, duration)` 导入。
+- **覆盖范围与分段**：按两次原声之间的连续旁白／无人声画面铺同一首BGM，不按章节或镜头拆碎；原声前淡出、原声期间新增BGM为零，下一段旁白再淡入。工程按完整配乐段保留独立素材，执行 [连续配乐规范](../video-use/references/recap-viewer-preferences.md#配乐以连续旁白段为单位)。
+- **淡入淡出**：每段 BGM 调用 `segment.add_fade("2s", "5s")`，即 **2 秒 fade-in** + **5 秒 fade-out**。
+- **音量平衡**：BGM 音量低于旁白，通过 `segment.add_keyframe(time_offset, volume)` 设置，默认 0.3–0.5（用户可在剪映中微调）。
 
 ---
 
-## 5. Skill 详细说明
+## 交接标准
 
-### 4.1 bilibili-competitor-radar（辅助前置，draft）
-
-- **本地路径**：`~/.workbuddy/skills/bilibili-competitor-radar/`
-- **Git 状态**：本地已 init draft v0.1
-- **当前能力**：依赖 `bilibili-all-in-one`，提供竞品搜索 / 热度探测 / 对标账号画像 / 选题报告生成（人工）
-- **已知缺口**：无关键词搜索 / 无 UP 主监控 / 无增长率排序 / 无自动报告
-- **何时补齐**：作为独立仓库迭代
-
-### 4.2 gameshow-recap-creator（核心）
-
-- **本地路径**：`~/.workbuddy/skills/gameshow-recap-creator/`
-- **Git 状态**：本地已 init，待推 GitHub
-- **职责**：理解原视频，输出二创解说脚本
-- **两层处理**：
-  - 第一层（Pre-Analysis）：角色名单 + 游戏目标 + 主线地图 + 核心爆点
-  - 第二层（Script Writing）：8 段结构化解说脚本
-- **输入**：原片字幕（SRT/JSON/TXT）+ 元数据 + 场景类型
-- **输出**：Markdown 脚本（旁白 + 画面时间码 + 花字 + 剪辑标注 + 包装清单）
-- **已验证**：The Traitors UK S01E01 → `projects/The-Traitors-UK-S01E01/gameshow-recap-creator/`
-
-### 4.3 video-use（核心）
-
-- **本地路径**：`~/.workbuddy/skills/video-use/`
-- **GitHub**：https://github.com/phoenix0110/video-use
-- **职责**：执行视频剪辑，把脚本变视频
-- **能力**：切片 / 拼接 / 烧字幕 / 加花字 / TTS 音轨 / 30ms 淡入淡出 / 自检渲染
-- **转写双 backend**：ElevenLabs Scribe（付费） / 本地 openai-whisper（免费，无 API key）
-- **12 条 Hard Rules**：字幕最后 / per-segment extract / 30ms 淡入淡出 / PTS-shift 花字 / 输出时间线 offset / 词边界切点 / 30–200ms padding 等
-
----
-
-## 6. 数据流对照表
-
-| 数据名称 | 产生方 | 消费方 | 格式 | 存储位置 |
-|---|---|---|---|---|
-| 选题报告 | `bilibili-competitor-radar` | `gameshow-recap-creator`（可选输入） | Markdown | `<根>/competitor-report.md`（可选） |
-| 解说脚本 | `gameshow-recap-creator` | `video-use` | Markdown | `<根>/gameshow-recap-creator/recap-script.md` |
-| 最终成片 | `video-use` | 人工审核 → B 站上传 | MP4 | `<根>/final.mp4` |
-
----
-
-## 7. 已验证的端到端样例
-
-**项目**：`outputs/projects/The-Traitors-UK-S01E01/`
-
-| 阶段 | 状态 |
+| 交接 | 必须带上的内容 |
 |---|---|
-| Bilibili Competitor Radar | ⏭️ 跳过（已确定选题） |
-| Gameshow Recap Creator | ✅ 已完成（11 分钟解说脚本） |
-| Video Use | ⏳ 待运行 |
-
-样例证明 `gameshow-recap-creator` 可以独立完成脚本生成，不需要任何外部输入。下一步是把 `recap-script.md` 喂给 `video-use` 跑剪辑流水线。
+| 素材 → 脚本 | 源视频、带时间码字幕、视频元数据、已确认的原声目标比例 |
+| 脚本 → 剪辑 | 当前 `recap-script.md`、通过校验的 `narration-review.json`、`narration-review.md`、润色前快照、源字幕、源视频、钩子来源和画面范围 |
+| TTS → EDL | `sentences-manifest.json`；每句音频路径、cue_id、最终字幕、音色／后端、文本哈希、实测时长；原声和无人声留白单独插槽 |
+| EDL → 渲染 | 精确切片边界、cue/beat/source_quote、音量与字幕布局 |
+| 渲染 → 成片 | 每个切点首尾检查结果、整体节奏检查结果、修订记录 |
